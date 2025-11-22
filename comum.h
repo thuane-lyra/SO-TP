@@ -12,12 +12,15 @@
 
 // constantes que vao ser usadas em bue sitios
 #define MAX_USERS 30          // 
-#define MAX_VEHICLES 10       // 
+#define MAX_VEICULOS 10       // 
 #define FIFO_CONTROLADOR "fifo_controlador" // O FIFO onde o admin recebe pedidos
 // o fifo e pa criar os name pipes
 // as aspas é meio que um nome para que o cliente saiba
 // a "que porta bater"
 #define TAM_MAX_BUFFER 256    // Defenir tamanho pas strings que seja seguro
+
+// Adicionar prefixo para a criação dos Named Pipes de resposta dos Clientes
+#define FIFO_CLIENTE_PREFIX "/tmp/cli_" //tarefa1
 
 
 //vou fazer os structs já aqui, depois se quiseres
@@ -65,6 +68,32 @@ typedef struct{
     enum{LIVRE, OCUPADO, A_TERMINAR} estado;
     //se estado = 0 LIVRE se = 1 OCUPADO etc..
 }EstadoVeiculo;
+
+// 1. MENSAGEM DE RESPOSTA DO CONTROLADOR (Controlador -> Cliente)
+typedef enum {
+    RES_OK,       // Operação bem-sucedida (ex: Login aceite)
+    RES_ERRO,     // Operação falhada (ex: Username já em uso)
+    RES_INFO      // Apenas informação (ex: "Viagem #5 agendada")
+} TipoResposta;
+
+typedef struct {
+    TipoResposta tipo;
+    int id_servico; // Se for agendamento OK, inclui o ID atribuído
+    char mensagem[TAM_MAX_BUFFER]; // Mensagem detalhada para o utilizador
+} MsgControlador;
+
+// 2. MENSAGEM DE INTERAÇÃO DIRETA (Cliente <-> Veículo)
+
+typedef enum {
+    CMD_CHEGOU,   // Veículo avisa o Cliente que chegou ao local
+    CMD_ENTRAR,   // Cliente responde que vai entrar, indicando destino
+    CMD_SAIR      // Cliente indica que quer sair a meio da viagem
+} TipoComandoVeiculo;
+
+typedef struct {
+    TipoComandoVeiculo comando;
+    char destino[50]; // Usado apenas se comando for CMD_ENTRAR
+} MsgVeiculoCliente;
 
 
 #endif
