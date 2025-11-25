@@ -1,201 +1,260 @@
 #include "comum.h"
-#include <unistd.h> // Contém fork, exec, pipe, dup, sleep - ESSENCIAL
-#include <stdlib.h> // Contém exit, EXIT_FAILURE, atoi - ESSENCIAL
-#include <string.h> // Contém strlen, strcmp
+#include <unistd.h> 
+#include <stdlib.h> 
+#include <string.h> 
+
+// --- ESTRUTURAS DE DADOS INTERNAS ---
+
+// Ficha de cada veículo na frota (Painel de Controlo)
+typedef struct {
+    pid_t pid;       // PID do processo veículo
+    int pipe_fd;     // Descritor para ler a telemetria (pipe anónimo)
+    int ocupado;     // 0 = Slot livre, 1 = Veículo a andar
+} VeiculoFicha;
+
+// --- VARIÁVEIS GLOBAIS ---
+int running = 1;                  // Controla o loop principal
+VeiculoFicha frota[MAX_VEICULOS]; // Array para gerir os veículos
 
 // --- FUNÇÕES AUXILIARES ---
 
-/**
- * Constroi e envia a mensagem de resposta (OK/ERRO) ao FIFO exclusivo do Cliente. (T3)
- */
+// Limpa o array da frota no arranque
+void inicializar_frota() {
+    for (int i = 0; i < MAX_VEICULOS; i++) {
+        frota[i].pid = 0;
+        frota[i].pipe_fd = -1;
+        frota[i].ocupado = 0;
+    }
+}
+
+// Envia resposta para o FIFO exclusivo do cliente
 void enviar_resposta(pid_t pid_cliente, TipoResposta tipo, const char *msg_detalhada){
     char fifo_cliente[50];
     sprintf(fifo_cliente, "%s%d", FIFO_CLIENTE_PREFIX, pid_cliente);
-    int fd_cli = open(fifo_cliente, O_WRONLY);
-
-    if ( fd_cli == -1){
-       perror("ERRO: Controlador nao conseguiu abrir FIFO do cliente para responder"); 
-       return; 
-    }
+    
+    int fd_cli = open(fifo_cliente, O_WRONLY); // Abre para escrita
+    if (fd_cli == -1) return; // Se falhar, o cliente já foi embora
+    
     MsgControlador resposta;
     resposta.tipo = tipo;
-    resposta.id_servico = -1;
+    resposta.id_servico = -1; // Poderia ser usado para confirmar ID
     strncpy(resposta.mensagem, msg_detalhada, sizeof(resposta.mensagem)-1);
-    resposta.mensagem[sizeof(resposta.mensagem)-1] = '\0';
+    resposta.mensagem[sizeof(resposta.mensagem)-1] = '\0'; // Segurança
 
     write(fd_cli, &resposta, sizeof(resposta));
-
     close(fd_cli);
-    printf("Controlador enviou resposta [%d] para PID %d.\n", tipo, pid_cliente);
 }
 
-
-/**
- * [TAREFA 4] Lanca um processo filho 'veiculo' usando fork/exec/pipe.
- */
+// Lança um processo veículo (fork + exec + pipe)
 void cria_veiculo(int servico_id, int dist_km, const char *cliente_fifo_path) { 
-    int pipe_fd[2]; 
-    if (pipe(pipe_fd) == -1) {
-        perror("Erro ao criar pipe anonimo");
+    // 1. Encontrar um slot livre na frota
+    int slot = -1;
+    for(int i=0; i<MAX_VEICULOS; i++){
+        if(frota[i].ocupado == 0){
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot == -1) {
+        printf("ERRO: Frota cheia! Impossivel lancar veiculo.\n");
         return;
     }
 
+    // 2. Criar o Pipe Anónimo
+    int pipe_fd[2]; 
+    if (pipe(pipe_fd) == -1) {
+        perror("Erro pipe");
+        return;
+    }
+
+    // 3. Fork (Clonar processo)
     pid_t pid = fork();
 
-    if (pid < 0) {
-        perror("Erro no fork");
-        close(pipe_fd[0]);
-        close(pipe_fd[1]);
-        return;
-    } 
-    
-    // --- LADO DO FILHO (VEÍCULO) ---
-    if (pid == 0) { 
-        close(pipe_fd[0]); 
+    if (pid == 0) { // --- PROCESSO FILHO (VEICULO) ---
+        close(pipe_fd[0]); // Filho não lê do pai
         
-        // REDIRECIONAR o stdout (FD 1) para a ponta de escrita do pipe (USANDO DUP2)
-        if (dup2(pipe_fd[1], STDOUT_FILENO) == -1) { 
-            perror("Erro no dup2 (redirecionar stdout)");
-            exit(EXIT_FAILURE);
-        }
+        // Redirecionar STDOUT para o Pipe
+        dup2(pipe_fd[1], STDOUT_FILENO); 
         close(pipe_fd[1]); 
 
-        // EXEC: Substituir pela imagem do veiculo
+        // Preparar argumentos
         char s_id[10], s_dist[10];
         sprintf(s_id, "%d", servico_id);
         sprintf(s_dist, "%d", dist_km); 
 
+        // Executar o programa do veículo
         char *args[] = { "./veiculo", s_id, s_dist, (char*)cliente_fifo_path, NULL };
         execvp("./veiculo", args);
-
-        perror("Erro no execvp - nao encontrou 'veiculo'");
+        
+        // Se chegar aqui, correu mal
+        perror("Erro execvp");
         exit(EXIT_FAILURE); 
     } 
-    
-    // --- LADO DO PAI (CONTROLADOR) ---
-    else { 
-        close(pipe_fd[1]);
+    else { // --- PROCESSO PAI (CONTROLADOR) ---
+        close(pipe_fd[1]); // Pai não escreve no filho
 
-        printf("CONTROLADOR: Veiculo %d lancado (PID: %d). A ler telemetria do FD: %d\n", servico_id, pid, pipe_fd[0]);
-        
-        // [TAREFA 4] FECHA-SE A PONTA DE LEITURA (Pois não estamos a ler no loop)
-        close(pipe_fd[0]); 
+        // Configurar Pipe para NON-BLOCKING (Crucial para a Tarefa 5)
+        int flags = fcntl(pipe_fd[0], F_GETFL, 0);
+        fcntl(pipe_fd[0], F_SETFL, flags | O_NONBLOCK);
+
+        // Registar na frota
+        frota[slot].pid = pid;
+        frota[slot].pipe_fd = pipe_fd[0];
+        frota[slot].ocupado = 1;
+
+        printf("CONTROLADOR: Veiculo lancado (PID %d) no slot %d for Servico #%d.\n", pid, slot, servico_id);
     }
 }
 
-
-// --- LOOP PRINCIPAL E MAIN ---
-
-int running = 1;
+// --- MAIN ---
 
 int main(int argc, char *argv[]) {
-    // --- 1. CONFIGURAÇÃO DA FROTA ---
-    int n_veiculos = MAX_VEICULOS; 
+    inicializar_frota();
+
+    // 1. Configuração Inicial
+    int n_max_veiculos = MAX_VEICULOS; 
+    char *env = getenv("NVEICULOS");
+    if (env) {
+        n_max_veiculos = atoi(env);
+        if (n_max_veiculos > MAX_VEICULOS) n_max_veiculos = MAX_VEICULOS;
+    }
+
     UtilizadorAtivo users_ativos[MAX_USERS];
     int num_users_ativos = 0;
+
+    printf("CONTROLADOR: A iniciar (PID %d) | Max Veiculos: %d\n", getpid(), n_max_veiculos);
+
+    // 2. Criar e Abrir FIFO Principal
+    if (mkfifo(FIFO_CONTROLADOR, 0666) == -1) perror("Aviso mkfifo");
     
-    char *env_n_veiculos = getenv("NVEICULOS");
-    if (env_n_veiculos != NULL) {
-        n_veiculos = atoi(env_n_veiculos);
-        if (n_veiculos <= 0 || n_veiculos > MAX_VEICULOS) n_veiculos = MAX_VEICULOS;
-    }
-    printf("CONTROLADOR: A iniciar com max %d veiculos (PID %d)\n", n_veiculos, getpid());
-
-
-    // [BLOCO DE TESTE DA TAREFA 4]
-    printf("TESTE: A lancar veiculo de simulacao (Tarefa 4)...\n");
-    cria_veiculo(99, 50, "/tmp/cli_1234"); 
-    printf("TESTE: Veiculo lancado. A aguardar comandos ou clientes...\n"); 
-
-    sleep(1); // Espera 1s para o veículo escrever e terminar.
-    // [FIM DO BLOCO DE TESTE DA TAREFA 4]
-
-
-    // --- 2. CRIAÇÃO DO CANAL DE COMUNICAÇÃO ---
-    if (mkfifo(FIFO_CONTROLADOR, 0666) == -1) {
-        perror("Aviso: mkfifo (se ja existe, ignora)");
-    }
-
-    // --- 3. ABERTURA NÃO-BLOQUEANTE (TAREFA 2) ---
     int fd_fifo = open(FIFO_CONTROLADOR, O_RDWR | O_NONBLOCK);
-    if (fd_fifo == -1) {
-        perror("Erro open FIFO");
-        return 1;
-    }
+    if (fd_fifo == -1) { perror("Erro fatal FIFO"); return 1; }
 
-    // Configura o Teclado como Não-Bloqueante
+    // 3. Configurar Teclado (Stdin) Non-Blocking
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
-    printf("CONTROLADOR: A aguardar comandos ou clientes...\n");
-
     MsgCliente msg;
     char cmd_buffer[100];
+    EstadoVeiculo telemetria; 
 
-    // --- 4. LOOP PRINCIPAL (POLLING) ---
+    // --- LOOP PRINCIPAL ---
     while (running) {
         
-        // A. Verificar se há Clientes a falar no FIFO (TAREFA 3)
-        int n_lidos = read(fd_fifo, &msg, sizeof(msg));
-        if (n_lidos == sizeof(msg)) {
-            printf("[FIFO] Recebi mensagem do PID %d (Tipo: %d)\n", msg.pid_cliente, msg.tipo);
-            
-            // Tratamento do LOGIN
-            if (msg.tipo == MSG_LOGIN) {
-                printf("   > Pedido de LOGIN de %s\n", msg.username);
-
-                // --- LÓGICA DE VALIDAÇÃO ---
-                if(num_users_ativos >= MAX_USERS){
-                    enviar_resposta(msg.pid_cliente, RES_ERRO, "Limite maximo de utilizadores atingido.");
-                    printf("   > Login RECUSADO: Limite atingido.\n");
-                }else{
-                    int user_existe = 0;
-                    for(int i=0; i<num_users_ativos;i++){
-                        if(strcmp(users_ativos[i].username,msg.username)==0){
-                            user_existe = 1;
-                            break;
-                        }
+        // A. MONITORIZAR A FROTA (TELEMETRIA)
+        for (int i = 0; i < MAX_VEICULOS; i++) {
+            if (frota[i].ocupado) {
+                // Tenta ler do pipe deste veículo
+                int n = read(frota[i].pipe_fd, &telemetria, sizeof(telemetria));
+                
+                if (n == sizeof(telemetria)) {
+                    printf("[TELEMETRIA] Veiculo PID %d | Servico #%d | Progresso: %d%%\n", 
+                           frota[i].pid, telemetria.servico_id, telemetria.percentagem_viagem);
+                    
+                    if (telemetria.estado == A_TERMINAR) {
+                        printf("             >>> Servico CONCLUIDO. Slot %d livre.\n", i);
+                        close(frota[i].pipe_fd);
+                        frota[i].ocupado = 0; 
                     }
-                    if (user_existe){
-                        enviar_resposta(msg.pid_cliente, RES_ERRO, "Username ja em uso. Escolha outro.");
-                        printf("  > Login RECUSADO: Username ja em uso.\n");
-                    }else{
-                        users_ativos[num_users_ativos].pid = msg.pid_cliente;
-                        strncpy(users_ativos[num_users_ativos].username, msg.username, sizeof(users_ativos[0].username)-1);
-                        num_users_ativos++;
-                        enviar_resposta(msg.pid_cliente, RES_OK, "Login aceite. Bem-vindo!");
-                        printf("   > Login ACEITE. Total de users: %d\n", num_users_ativos);
-                    }
-                } 
-            }
-        } 
-
-
-        // B. Verificar se o Administrador escreveu algo no teclado
-        int n_teclado = read(STDIN_FILENO, cmd_buffer, sizeof(cmd_buffer)-1);
-        if (n_teclado > 0) {
-            cmd_buffer[n_teclado] = '\0'; 
-            
-            if (cmd_buffer[strlen(cmd_buffer)-1] == '\n') 
-                cmd_buffer[strlen(cmd_buffer)-1] = '\0';
-
-            printf("[ADMIN] Comando: %s\n", cmd_buffer);
-
-            // Processar comandos de gestão
-            if (strcmp(cmd_buffer, "terminar") == 0) {
-                running = 0; 
-            } else {
-                printf("Comando desconhecido. Tente 'terminar'.\n");
+                }
+                else if (n == 0) { 
+                    // Veículo morreu inesperadamente
+                    close(frota[i].pipe_fd);
+                    frota[i].ocupado = 0;
+                }
             }
         }
 
-        // C. PAUSA INTELIGENTE
-        usleep(100000); 
-    } 
+        // B. LER PEDIDOS DOS CLIENTES (FIFO)
+        int n_lidos = read(fd_fifo, &msg, sizeof(msg));
+        if (n_lidos == sizeof(msg)) {
+            
+            // --- LOGIN ---
+            if (msg.tipo == MSG_LOGIN) {
+                printf("[CLIENTE] Pedido LOGIN: %s\n", msg.username);
+                
+                if(num_users_ativos >= MAX_USERS) {
+                    enviar_resposta(msg.pid_cliente, RES_ERRO, "Sistema cheio.");
+                } else {
+                    int existe = 0;
+                    for(int i=0; i<num_users_ativos; i++)
+                        if(strcmp(users_ativos[i].username, msg.username) == 0) existe = 1;
 
-    // --- 5. LIMPEZA FINAL ---
+                    if (existe) {
+                        enviar_resposta(msg.pid_cliente, RES_ERRO, "Username em uso.");
+                    } else {
+                        users_ativos[num_users_ativos].pid = msg.pid_cliente;
+                        strncpy(users_ativos[num_users_ativos].username, msg.username, 20);
+                        num_users_ativos++;
+                        enviar_resposta(msg.pid_cliente, RES_OK, "Login com sucesso!");
+                    }
+                }
+            }
+            // --- AGENDAR VIAGEM ---
+            else if (msg.tipo == MSG_PEDIDO_VIAGEM) {
+                printf("[CLIENTE] Pedido VIAGEM: %s -> %s (%d km)\n", 
+                       msg.dados.partida, msg.dados.destino, msg.dados.distancia);
+
+                // Verificar vagas (respeitando o limite da env var)
+                int vagas = 0;
+                for(int i=0; i<n_max_veiculos; i++) if(!frota[i].ocupado) vagas++;
+
+                if (vagas > 0) {
+                    static int id_c = 1;
+                    char fifo_cli[50];
+                    sprintf(fifo_cli, "%s%d", FIFO_CLIENTE_PREFIX, msg.pid_cliente);
+                    
+                    cria_veiculo(id_c++, msg.dados.distancia, fifo_cli);
+                    enviar_resposta(msg.pid_cliente, RES_INFO, "Veiculo enviado!");
+                } else {
+                    enviar_resposta(msg.pid_cliente, RES_ERRO, "Sem veiculos disponiveis.");
+                }
+            }
+        }
+
+        // C. LER COMANDOS DO ADMINISTRADOR (TECLADO)
+        if (read(STDIN_FILENO, cmd_buffer, sizeof(cmd_buffer)-1) > 0) {
+            cmd_buffer[strlen(cmd_buffer)] = '\0';
+            if (cmd_buffer[strlen(cmd_buffer)-1] == '\n') 
+                cmd_buffer[strlen(cmd_buffer)-1] = '\0';
+
+            // Comando UTILIZ
+            if (strcmp(cmd_buffer, "utiliz") == 0) {
+                printf("\n--- UTILIZADORES (%d) ---\n", num_users_ativos);
+                for(int i=0; i<num_users_ativos; i++)
+                    printf("User: %-15s | PID: %d\n", users_ativos[i].username, users_ativos[i].pid);
+                printf("-------------------------\n");
+            }
+            // Comando FROTA
+            else if (strcmp(cmd_buffer, "frota") == 0) {
+                printf("\n--- FROTA (%d slots max) ---\n", n_max_veiculos);
+                int cnt = 0;
+                for(int i=0; i<MAX_VEICULOS; i++){
+                    if(frota[i].ocupado){
+                        printf("Slot %d: [OCUPADO] PID %d | PipeFD: %d\n", i, frota[i].pid, frota[i].pipe_fd);
+                        cnt++;
+                    }
+                }
+                if(cnt == 0) printf("Nenhum veiculo a circular.\n");
+                printf("----------------------------\n");
+            }
+            // Comando TERMINAR
+            else if (strcmp(cmd_buffer, "terminar") == 0) {
+                running = 0;
+            }
+            // Comando AJUDA
+            else {
+                printf("Comandos disponiveis: utiliz, frota, terminar\n");
+            }
+        }
+
+        usleep(100000); // Pausa de 100ms
+    }
+
+    // --- LIMPEZA ---
     close(fd_fifo);
-    unlink(FIFO_CONTROLADOR); 
-    printf("CONTROLADOR: Encerrado com sucesso.\n");
+    unlink(FIFO_CONTROLADOR);
+    printf("Sistema encerrado.\n");
     return 0;
 }
