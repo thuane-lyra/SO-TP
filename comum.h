@@ -101,4 +101,5 @@ typedef struct {
     char username[20];
     //nas proxs tarefas, acrescentar o estado
 } UtilizadorAtivo;
+
 #endif
