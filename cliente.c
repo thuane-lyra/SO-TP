@@ -45,23 +45,35 @@ int main(int argc, char *argv[]) {
 
     printf("CLIENTE: Pedido enviado. A aguardar resposta em %s...\n", fifo_meu);
 
-    // 4. AGUARDAR RESPOSTA (BLOQUEANTE)
-    // Aqui abrimos o nosso FIFO em modo normal (sem O_NONBLOCK).
-    // O programa vai PARAR nesta linha (read) até que o Controlador nos responda.
-    int fd_meu = open(fifo_meu, O_RDONLY);
-    
-    MsgControlador resposta;
-    int n = read(fd_meu, &resposta, sizeof(resposta));
-    
-    if (n == sizeof(resposta)) {
-        // (Futuro: Aqui vamos verificar se resposta.tipo == RES_OK)
-        printf("CLIENTE: Recebi resposta do servidor!\n");
-        printf("       > Tipo: %d\n", resposta.tipo);
-        printf("       > Msg: %s\n", resposta.mensagem);
-    }
+  // 4. AGUARDAR RESPOSTA (BLOQUEANTE)
+// Aqui abrimos o nosso FIFO em modo normal (sem O_NONBLOCK).
+// O programa vai PARAR nesta linha (read) até que o Controlador nos responda.
+int fd_meu = open(fifo_meu, O_RDONLY);
 
-    // 5. LIMPEZA
-    close(fd_meu);
-    unlink(fifo_meu); // Muito importante: Apagar o meu FIFO antes de sair!
-    return 0;
+MsgControlador resposta;
+int n = read(fd_meu, &resposta, sizeof(resposta));
+
+int status_code = 0; // 0 para sucesso (termina OK), 1 para erro (termina com erro)
+
+if( n == sizeof(resposta)){
+   // Verificar o tipo de resposta enviada pelo Controlador
+   if (resposta.tipo == RES_OK){
+    printf("\n LOGIN SUCESSO! %s\n", resposta.mensagem);
+    // O Cliente fica num loop de comandos aqui, mas por agora, termina OK. 
+   } else if(resposta.tipo == RES_ERRO){
+    printf("\n LOGIN FALHADO! %s\n", resposta.mensagem);
+        status_code = 1; // Falhou, vamos terminar com código de erro
+   } else {
+    printf("\n Resposta desconhecida do controlador (Tipo: %d). %s\n", resposta.tipo, resposta.mensagem);
+        status_code = 1;
+   }
+} else {
+    // Se o read falhar ou ler um tamanho inesperado (n != sizeof(resposta))
+    printf("\nERRO de leitura no FIFO de resposta. Tamanho lido: %d\n", n);
+    status_code = 1;
+}
+// 5. LIMPEZA
+close(fd_meu);
+unlink(fifo_meu); // Muito importante: Apagar o meu FIFO antes de sair!
+return status_code; // Retorna 0 para sucesso, 1 para erro
 }

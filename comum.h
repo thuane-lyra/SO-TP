@@ -95,5 +95,10 @@ typedef struct {
     char destino[50]; // Usado apenas se comando for CMD_ENTRAR
 } MsgVeiculoCliente;
 
-
+//controlador registar os utilizadores ativos
+typedef struct {
+    pid_t pid;
+    char username[20];
+    //nas proxs tarefas, acrescentar o estado
+} UtilizadorAtivo;
 #endif
