@@ -214,10 +214,12 @@ int main(int argc, char *argv[]) {
         }
 
         // C. LER COMANDOS DO ADMINISTRADOR (TECLADO)
-        if (read(STDIN_FILENO, cmd_buffer, sizeof(cmd_buffer)-1) > 0) {
-            cmd_buffer[strlen(cmd_buffer)] = '\0';
-            if (cmd_buffer[strlen(cmd_buffer)-1] == '\n') 
-                cmd_buffer[strlen(cmd_buffer)-1] = '\0';
+        // Correção aplicada aqui: Capturamos 'n' para colocar o terminador nulo corretamente
+        int n = read(STDIN_FILENO, cmd_buffer, sizeof(cmd_buffer)-1);
+        if (n > 0) {
+            cmd_buffer[n] = '\0'; // Garante o fim da string
+            if (n > 0 && cmd_buffer[n-1] == '\n') 
+                cmd_buffer[n-1] = '\0'; // Remove o ENTER
 
             // Comando UTILIZ
             if (strcmp(cmd_buffer, "utiliz") == 0) {
