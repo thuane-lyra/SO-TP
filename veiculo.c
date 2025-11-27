@@ -22,6 +22,8 @@ int main(int argc, char *argv[]) {
     if (fd_cli != -1) {
         MsgControlador msg;
         msg.tipo = RES_INFO;
+        msg.id_servico = id_servico;
+        //Mensagem simples. O cliente recebe e sabe que a viagem começou.
         sprintf(msg.mensagem, "Taxi chegou! A iniciar viagem de %dkm...", dist_km);
         write(fd_cli, &msg, sizeof(msg));
         close(fd_cli);
@@ -34,7 +36,7 @@ int main(int argc, char *argv[]) {
     EstadoVeiculo estado;
     estado.veiculo_pid = getpid();
     estado.servico_id = id_servico;
-    estado.estado = OCUPADO; // [cite: 43] Cliente entrou
+    estado.estado = OCUPADO;  // [cite: 43] Cliente entrou
 
     // O enunciado diz: reportar a cada 10% da distancia [cite: 43]
     // Velocidade = 1 unidade de tempo [cite: 170]
@@ -48,7 +50,7 @@ int main(int argc, char *argv[]) {
         // 2. Simular o tempo a passar
         // Quanto maior a distância, mais tempo demora cada 10%? 
         // Para simplificar e testar rápido, usamos 1 segundo por cada 10%
-        sleep(1); 
+      if (p <100)  sleep(1); 
     }
 
     // --- FASE 3: FIM DA VIAGEM ---
