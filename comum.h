@@ -9,7 +9,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <errno.h>
 
 // constantes que vao ser usadas em bue sitios
 #define MAX_USERS 30          // 

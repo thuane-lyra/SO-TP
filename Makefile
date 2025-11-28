@@ -1,6 +1,7 @@
 # Compiler e Flags
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+# Adicionámos -pthread para as threads funcionarem
+CFLAGS = -Wall -Wextra -g -pthread
 
 # Targets obrigatórios
 all: controlador cliente veiculo
