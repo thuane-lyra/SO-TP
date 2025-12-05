@@ -7,12 +7,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // --- SETUP INICIAL IGUAL ---
+    // --- 1. PREPARAÇÃO INICIAL ---
+    printf("CLIENTE: A iniciar como %s (PID %d)\n", argv[1], getpid());
+
     if (access(FIFO_CONTROLADOR, F_OK) != 0) {
-        printf("ERRO: Controlador nao acessivel.\n");
+        printf("ERRO: O Controlador nao esta a correr.\n");
         return 1;
     }
 
+    // Criar o FIFO exclusivo deste cliente
     char fifo_meu[50];
     sprintf(fifo_meu, "%s%d", FIFO_CLIENTE_PREFIX, getpid()); 
     if (mkfifo(fifo_meu, 0666) == -1) {
@@ -20,7 +23,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Envia Login
+    // --- 2. ENVIAR LOGIN ---
     MsgCliente msg;
     msg.pid_cliente = getpid();
     msg.tipo = MSG_LOGIN;
@@ -31,46 +34,46 @@ int main(int argc, char *argv[]) {
     write(fd_server, &msg, sizeof(msg));
     close(fd_server);
 
-    // Abre o seu FIFO para leitura (Bloqueante por agora)
-    int fd_meu = open(fifo_meu, O_RDWR); // RDWR evita que o select dispare EOF constantemente
+    // Abrir o nosso FIFO para receber respostas (RDWR para não bloquear logo no select)
+    int fd_meu = open(fifo_meu, O_RDWR); 
 
-    printf("CLIENTE: Login enviado. A aguardar...\n");
+    printf("CLIENTE: Login enviado. A aguardar resposta...\n");
 
-    // --- LOOP COM SELECT ---
-    // Em vez de esperar resposta bloqueante, entramos logo no loop principal
-    // O select vai gerir se é resposta de login ou input do user
-    
+    // --- 3. LOOP PRINCIPAL (MULTIPLEXAGEM COM SELECT) ---
     fd_set read_fds;
     char linha[100];
-    int logado = 0; // Flag para saber se já fomos aceites
+    int logado = 0; // Flag: 0 = A espera de login, 1 = Logado
 
     while(1) {
-        printf("Comando > "); 
-        fflush(stdout); // Forçar o print da prompt
+        // Mostrar a prompt apenas se já estivermos logados
+        if (logado) {
+            printf("Comando (agendar/cancelar/sair) > "); 
+            fflush(stdout); 
+        }
 
-        // 1. Preparar o conjunto de descritores
+        // A. Preparar o select
         FD_ZERO(&read_fds);
-        FD_SET(STDIN_FILENO, &read_fds); // Monitorizar Teclado (0)
-        FD_SET(fd_meu, &read_fds);       // Monitorizar FIFO do Servidor
+        FD_SET(STDIN_FILENO, &read_fds); // Monitorizar Teclado (FD 0)
+        FD_SET(fd_meu, &read_fds);       // Monitorizar FIFO de Resposta
 
         int max_fd = (STDIN_FILENO > fd_meu) ? STDIN_FILENO : fd_meu;
 
-        // 2. Chamar o select (Bloqueia aqui até haver ação)
+        // B. Esperar por ação (Bloqueia aqui)
         int activity = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
 
-        if ((activity < 0)) {
+        if (activity < 0) {
             perror("Erro no select");
             break;
         }
 
-        // --- CASO A: MENSAGEM DO SERVIDOR ---
+        // --- CASO 1: RECEBEU MENSAGEM DO CONTROLADOR/TAXI ---
         if (FD_ISSET(fd_meu, &read_fds)) {
             MsgControlador resposta;
             int n = read(fd_meu, &resposta, sizeof(resposta));
             
-            // Limpar a linha atual para não estragar a interface visual
-            printf("\r                          \r"); 
-            
+            // Truque visual: Limpa a linha atual para a notificação não ficar misturada com a prompt
+            printf("\r" "\x1b[K"); 
+
             if (n == sizeof(resposta)) {
                 if (resposta.tipo == RES_OK) {
                     printf(">> SISTEMA: Login Aceite! %s\n", resposta.mensagem);
@@ -78,7 +81,7 @@ int main(int argc, char *argv[]) {
                 }
                 else if (resposta.tipo == RES_ERRO) {
                     printf(">> SISTEMA: Erro: %s\n", resposta.mensagem);
-                    if (!logado) break; // Se falhou login, sai
+                    if (!logado) break; // Se falhou o login inicial, sai.
                 }
                 else if (resposta.tipo == RES_INFO) {
                     printf(">> NOTIFICACAO: %s\n", resposta.mensagem);
@@ -86,23 +89,32 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // --- CASO B: INPUT DO UTILIZADOR ---
+        // --- CASO 2: O UTILIZADOR ESCREVEU NO TECLADO ---
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             if (fgets(linha, sizeof(linha), stdin) == NULL) break;
             
-            // Só processa comandos se estiver logado
+            // Só aceita comandos se o login já foi aceite
             if (!logado) {
-                printf("Ainda nao estas logado...\n");
+                printf("Ainda nao recebeste confirmacao de login...\n");
                 continue;
             }
 
+            // Parsing do comando
             char cmd[20], arg1[20], arg2[20], arg3[20];
-            arg1[0]='\0'; arg2[0]='\0'; arg3[0]='\0';
+            // Limpar buffers
+            memset(cmd, 0, 20); memset(arg1, 0, 20); 
+            memset(arg2, 0, 20); memset(arg3, 0, 20);
+
             int n_args = sscanf(linha, "%s %s %s %s", cmd, arg1, arg2, arg3);
 
             if (n_args > 0) {
-                if (strcmp(cmd, "sair") == 0) break;
+                // > SAIR
+                if (strcmp(cmd, "sair") == 0) {
+                    printf("A sair...\n");
+                    break;
+                }
                 
+                // > AGENDAR
                 else if (strcmp(cmd, "agendar") == 0) {
                      if (n_args < 4) {
                         printf("Uso: agendar <origem> <destino> <distancia>\n");
@@ -122,13 +134,33 @@ int main(int argc, char *argv[]) {
                         }
                      }
                 }
+                
+                // > CANCELAR (TAREFA 7)
+                else if (strcmp(cmd, "cancelar") == 0) {
+                     if (n_args < 2) {
+                        printf("Uso: cancelar <id_servico>\n");
+                     } else {
+                        MsgCliente p;
+                        p.pid_cliente = getpid();
+                        p.tipo = MSG_CANCELAR_VIAGEM;
+                        p.dados.id_viagem = atoi(arg1); // ID vem no primeiro argumento
+
+                        int fd = open(FIFO_CONTROLADOR, O_WRONLY);
+                        if(fd != -1) {
+                            write(fd, &p, sizeof(p));
+                            close(fd);
+                            printf(">> Pedido de cancelamento para servico #%d enviado.\n", p.dados.id_viagem);
+                        }
+                     }
+                }
                 else {
-                    printf("Comando desconhecido.\n");
+                    printf("Comando invalido.\n");
                 }
             }
         }
     }
 
+    // --- 4. LIMPEZA FINAL ---
     close(fd_meu);
     unlink(fifo_meu);
     return 0;
