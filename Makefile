@@ -16,7 +16,7 @@ veiculo: veiculo.o
 	$(CC) $(CFLAGS) -o veiculo veiculo.o
 
 # Compilação genérica dos objetos
-%.o: %.c common.h
+%.o: %.c comum.h
 	$(CC) $(CFLAGS) -c $<
 
 # Limpeza obrigatória

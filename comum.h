@@ -9,10 +9,12 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/wait.h>
+#include <errno.h> // Adicionado para evitar erros no mkfifo (EEXIST)
 
 // constantes que vao ser usadas em bue sitios
-#define MAX_USERS 30          // 
-#define MAX_VEICULOS 10       // 
+#define MAX_USERS 30          
+#define MAX_VEICULOS 10       
 #define FIFO_CONTROLADOR "fifo_controlador" // O FIFO onde o admin recebe pedidos
 // o fifo e pa criar os name pipes
 // as aspas é meio que um nome para que o cliente saiba
@@ -54,7 +56,7 @@ typedef struct{
         char destino[50]; //isto e so informativo
         int distancia; //Estimativa ou valor real ns
     }dados;
-}MsgCliente;
+} MsgCliente;
 
 //struct para reportar ao controlador 
 //via stdout ou pipe anonimo
@@ -67,7 +69,7 @@ typedef struct{
     int servico_id;
     enum{LIVRE, OCUPADO, A_TERMINAR} estado;
     //se estado = 0 LIVRE se = 1 OCUPADO etc..
-}EstadoVeiculo;
+} EstadoVeiculo;
 
 // 1. MENSAGEM DE RESPOSTA DO CONTROLADOR (Controlador -> Cliente)
 typedef enum {
@@ -82,6 +84,14 @@ typedef struct {
     char mensagem[TAM_MAX_BUFFER]; // Mensagem detalhada para o utilizador
 } MsgControlador;
 
+
+/* =================================================================================
+   [SECÇÃO DESCONTINUADA / NÃO USADA]
+   Motivo: Simplificação do Enunciado.
+   Deixaram de ser necessários os comandos manuais para entrar/sair do veículo.
+   Abaixo estão as estruturas antigas mantidas para referência do grupo.
+   =================================================================================
+
 // 2. MENSAGEM DE INTERAÇÃO DIRETA (Cliente <-> Veículo)
 
 typedef enum {
@@ -94,6 +104,9 @@ typedef struct {
     TipoComandoVeiculo comando;
     char destino[50]; // Usado apenas se comando for CMD_ENTRAR
 } MsgVeiculoCliente;
+
+*/ // Fim da secção comentada
+
 
 //controlador registar os utilizadores ativos
 typedef struct {

@@ -59,10 +59,25 @@ int main(int argc, char *argv[]) {
     estado.servico_id = g_id_servico;
     estado.estado = OCUPADO;
 
+    // --- CÁLCULO DO TEMPO ---
+    // Regra: Velocidade = 1km / 1seg
+    // O loop corre 10 vezes (0, 10, 20... 100)
+    // Tempo a dormir em cada volta = Distancia Total / 10
+    
+    int segundos_por_fatia = dist_km / 10;
+
+    // Proteção: Se for muito perto (ex: 5km), 5/10 dá 0. 
+    // Forçamos a demorar pelo menos 1 segundo por fatia para se ver algo.
+    if (segundos_por_fatia < 1) segundos_por_fatia = 1;
+
     for (int p = 0; p <= 100; p += 10) {
         estado.percentagem_viagem = p;
+        
+        // Envia percentagem ao Controlador
         write(STDOUT_FILENO, &estado, sizeof(estado));
-        sleep(1); 
+        
+        // O tempo passa...
+        sleep(segundos_por_fatia); 
     }
 
     // --- FASE 3: FIM NORMAL ---

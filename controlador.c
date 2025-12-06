@@ -18,6 +18,11 @@ int num_users_ativos = 0;
 int running = 1;
 int n_max_veiculos = MAX_VEICULOS;
 
+// --- [NOVO] TAREFA 6: FILA DE ESPERA ---
+#define MAX_FILA 50
+MsgCliente fila_espera[MAX_FILA];
+int num_na_fila = 0;
+
 // Estatísticas
 long total_kms_percorridos = 0; 
 time_t hora_inicio_sistema;     
@@ -52,6 +57,32 @@ void enviar_resposta(pid_t pid_cliente, TipoResposta tipo, const char *msg) {
     write(fd, &resp, sizeof(resp));
     close(fd);
 }
+
+// --- [NOVO] FUNÇÕES DE FILA ---
+void adicionar_fila(MsgCliente pedido) {
+    if (num_na_fila < MAX_FILA) {
+        fila_espera[num_na_fila] = pedido;
+        num_na_fila++;
+        printf("[FILA] Pedido de %s adicionado. Posicao: %d\n", pedido.username, num_na_fila);
+        enviar_resposta(pedido.pid_cliente, RES_INFO, "Frota cheia. Ficaste em espera...");
+    } else {
+        enviar_resposta(pedido.pid_cliente, RES_ERRO, "Fila de espera cheia!");
+    }
+}
+
+int obter_proximo_fila(MsgCliente *pedido_out) {
+    if (num_na_fila > 0) {
+        *pedido_out = fila_espera[0]; // Pega o primeiro
+        // Move o resto da fila
+        for (int i = 0; i < num_na_fila - 1; i++) {
+            fila_espera[i] = fila_espera[i+1];
+        }
+        num_na_fila--;
+        return 1; 
+    }
+    return 0; 
+}
+
 
 // [NOVO] Função para cancelar servico
 void cancelar_servico(int id_alvo) {
@@ -161,8 +192,12 @@ void *tarefa_clientes(void *arg) {
                     sprintf(fifo, "%s%d", FIFO_CLIENTE_PREFIX, msg.pid_cliente);
                     cria_veiculo(id_c++, msg.dados.distancia, fifo);
                     enviar_resposta(msg.pid_cliente, RES_INFO, "Taxi enviado");
+                    
                 } else {
-                    enviar_resposta(msg.pid_cliente, RES_ERRO, "Sem taxis");
+                    // [NOVO] TAREFA 6: SE NÃO HÁ VAGAS, METER NA FILA
+                    pthread_mutex_lock(&trinco); // Protege a fila
+                    adicionar_fila(msg);
+                    pthread_mutex_unlock(&trinco);
                 }
             }
             else if (msg.tipo == MSG_CANCELAR_VIAGEM) {
@@ -268,13 +303,57 @@ int main() {
 
                         close(frota[i].pipe_fd);
                         frota[i].ocupado = 0;
-                        // waitpid não bloqueante para limpar zombie
-                        // waitpid(frota[i].pid, NULL, WNOHANG); 
+
+                        // [NOVO - TAREFA 6] Verificar se há alguém na fila
+                        MsgCliente proximo;
+                        if (obter_proximo_fila(&proximo)) {
+                            // Há alguém na fila! Vamos usar este slot AGORA.
+                            // Nota: Fazemos o fork manualmente para não ter problemas com mutex (já estamos com ele trancado)
+                            
+                            static int id_servico_fila = 5000;
+                            char fifo[50];
+                            sprintf(fifo, "%s%d", FIFO_CLIENTE_PREFIX, proximo.pid_cliente);
+                            
+                            int pipe_fd[2];
+                            pipe(pipe_fd);
+                            
+                            frota[i].ocupado = 1; // Reocupa
+
+                            pid_t pid = fork();
+                            if(pid == 0) { // Filho
+                                close(pipe_fd[0]); dup2(pipe_fd[1], STDOUT_FILENO); close(pipe_fd[1]);
+                                char s_id[10], s_dist[10];
+                                sprintf(s_id, "%d", id_servico_fila++);
+                                sprintf(s_dist, "%d", proximo.dados.distancia);
+                                char *args[] = { "./veiculo", s_id, s_dist, fifo, NULL };
+                                execvp("./veiculo", args);
+                                exit(1);
+                            } else { // Pai
+                                close(pipe_fd[1]);
+                                int f = fcntl(pipe_fd[0], F_GETFL, 0);
+                                fcntl(pipe_fd[0], F_SETFL, f | O_NONBLOCK);
+                                frota[i].pid = pid;
+                                frota[i].pipe_fd = pipe_fd[0];
+                                frota[i].distancia = proximo.dados.distancia;
+                                frota[i].id_servico = id_servico_fila - 1;
+                                
+                                printf("[FILA] Atendendo pedido da fila: %s (PID %d)\n", proximo.username, pid);
+                                enviar_resposta(proximo.pid_cliente, RES_INFO, "Chegou a tua vez! Taxi a caminho.");
+                            }
+                        }
                     }
                 }
+                                
                 else if (n == 0) { 
                     close(frota[i].pipe_fd);
                     frota[i].ocupado = 0;
+                     // waitpid não bloqueante para limpar zombie
+                     // [CORREÇÃO IMPORTANTE] 
+                    // Usamos 0 (bloqueante) em vez de WNOHANG aqui.
+                    // Como recebemos EOF, sabemos que o filho está a morrer agora mesmo.
+                    // Se usassemos WNOHANG e ele ainda não fosse zombie, perdiamos o PID 
+                    // ao fazer ocupado=0 e ele ficava zombie para sempre.
+                     waitpid(frota[i].pid, NULL, 0);
                 }
             }
         }
@@ -284,8 +363,11 @@ int main() {
 
     // --- LIMPEZA SEGURA ---
     printf("\nA encerrar sistema... Matando veiculos...\n");
-    for(int i=0; i<MAX_VEICULOS; i++) {
-        if(frota[i].ocupado) kill(frota[i].pid, SIGKILL);
+   for(int i=0; i<MAX_VEICULOS; i++) {
+        if(frota[i].ocupado) { 
+            kill(frota[i].pid, SIGKILL);
+            waitpid(frota[i].pid, NULL, 0);
+        }
     }
     unlink(FIFO_CONTROLADOR);
     return 0;
