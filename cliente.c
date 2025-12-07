@@ -122,6 +122,7 @@ int main(int argc, char *argv[]) {
                         MsgCliente p;
                         p.pid_cliente = getpid();
                         p.tipo = MSG_PEDIDO_VIAGEM;
+                        strncpy(p.username, argv[1], sizeof(p.username)-1);
                         strncpy(p.dados.partida, arg1, 49);
                         strncpy(p.dados.destino, arg2, 49);
                         p.dados.distancia = atoi(arg3);
