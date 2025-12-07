@@ -314,6 +314,32 @@ void *tarefa_admin(void *arg) {
                         printf("Slot %d: Servico #%d (PID %d)\n", i, frota[i].id_servico, frota[i].pid);
                 pthread_mutex_unlock(&trinco);
             }
+            else if (strcmp(cmd, "listar") == 0) { //  - O QUE FALTAVA
+                pthread_mutex_lock(&trinco);
+                
+                printf("\n--- AGENDAMENTOS (Timers) ---\n");
+                if (num_agendados == 0) printf("(Nenhum agendamento futuro)\n");
+                
+                for(int i=0; i<num_agendados; i++) {
+                    double faltam = difftime(lista_agendados[i].hora_execucao, time(NULL));
+                    printf("- Timer: %s | Dist: %dkm | Faltam: %.0fs\n", 
+                           lista_agendados[i].pedido.username, 
+                           lista_agendados[i].pedido.dados.distancia,
+                           faltam);
+                }
+                
+                printf("\n--- FILA DE ESPERA (Sem vaga) ---\n");
+                if (num_na_fila == 0) printf("(Vazia)\n");
+                
+                for(int i=0; i<num_na_fila; i++) {
+                     printf("- Posicao %d: %s | Dist: %dkm\n", 
+                            i+1, 
+                            fila_espera[i].username,
+                            fila_espera[i].dados.distancia);
+                }
+                pthread_mutex_unlock(&trinco);
+            }
+
             else if (strcmp(cmd, "km") == 0) {
                 pthread_mutex_lock(&trinco);
                 printf("Total KMs: %ld km\n", total_kms_percorridos);
