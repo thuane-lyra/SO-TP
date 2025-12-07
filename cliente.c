@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     while(1) {
         // Mostrar a prompt apenas se já estivermos logados
         if (logado) {
-            printf("Comando (agendar/cancelar/sair) > "); 
+            printf("Comando (agendar/consultar/cancelar/sair) > "); 
             fflush(stdout); 
         }
 
@@ -153,6 +153,23 @@ int main(int argc, char *argv[]) {
                         }
                      }
                 }
+                else if (strcmp(cmd, "consultar") == 0) {
+                     MsgCliente p;
+                     p.pid_cliente = getpid();
+                     p.tipo = MSG_CONSULTAR_VIAGENS;
+                     // Não precisa de dados extra, o PID chega
+                     
+                     int fd = open(FIFO_CONTROLADOR, O_WRONLY);
+                     if(fd != -1) {
+                         write(fd, &p, sizeof(p));
+                         close(fd);
+                         printf(">> Pedido de consulta enviado.\n");
+                     } else {
+                        printf(">> Erro ao contactar servidor.\n");
+                     }
+                 }
+
+
                 else {
                     printf("Comando invalido.\n");
                 }

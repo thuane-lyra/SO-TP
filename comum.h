@@ -41,7 +41,8 @@ typedef enum{
     MSG_LOGIN,
     MSG_LOGOUT,
     MSG_PEDIDO_VIAGEM,
-    MSG_CANCELAR_VIAGEM
+    MSG_CANCELAR_VIAGEM,
+    MSG_CONSULTAR_VIAGENS
 } TipoMsg;
 
 // struct para clinte po controlador enviado por namepipe

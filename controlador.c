@@ -9,6 +9,7 @@ typedef struct {
     int ocupado;     
     int distancia;   
     int id_servico;  // [NOVO] Para podermos cancelar pelo ID
+    int pid_cliente;
 } VeiculoFicha;
 
 // --- DADOS PARTILHADOS ---
@@ -101,7 +102,7 @@ void cancelar_servico(int id_alvo) {
     if(!encontrou) printf("[ERRO] Servico #%d nao encontrado ou ja terminou.\n", id_alvo);
 }
 
-void cria_veiculo(int servico_id, int dist, char *fifo_cli) {
+void cria_veiculo(int servico_id, int dist, char *fifo_cli, pid_t pid_cliente_dono) {
     int pipe_fd[2];
     if (pipe(pipe_fd) == -1) return;
 
@@ -140,6 +141,7 @@ void cria_veiculo(int servico_id, int dist, char *fifo_cli) {
         frota[slot].pipe_fd = pipe_fd[0];
         frota[slot].distancia = dist; 
         frota[slot].id_servico = servico_id; // [NOVO] Guardar ID
+        frota[slot].pid_cliente = pid_cliente_dono; // [NOVO] Guardamos o dono aqui
         pthread_mutex_unlock(&trinco);
         printf("[SISTEMA] Veiculo PID %d lancado (Servico %d).\n", pid, servico_id);
     }
@@ -190,7 +192,7 @@ void *tarefa_clientes(void *arg) {
                     static int id_c = 1;
                     char fifo[50];
                     sprintf(fifo, "%s%d", FIFO_CLIENTE_PREFIX, msg.pid_cliente);
-                    cria_veiculo(id_c++, msg.dados.distancia, fifo);
+                    cria_veiculo(id_c++, msg.dados.distancia, fifo, msg.pid_cliente);
                     enviar_resposta(msg.pid_cliente, RES_INFO, "Taxi enviado");
                     
                 } else {
@@ -205,12 +207,46 @@ void *tarefa_clientes(void *arg) {
                 printf("[THREAD CLI] Pedido cancelamento servico ID %d\n", msg.dados.id_viagem);
                 cancelar_servico(msg.dados.id_viagem);
             }
-        }
-    }
+            else if (msg.tipo == MSG_CONSULTAR_VIAGENS){
+                char buffer_resposta[TAM_MAX_BUFFER] = "";
+                int encontrou = 0;
+
+                pthread_mutex_lock(&trinco);
+                //1. ver na frota ativa
+                for(int i=0; i<MAX_VEICULOS; i++){
+                    // Verificamos se está ocupado E se pertence a este cliente
+                    if(frota[i].ocupado && frota[i].pid_cliente == msg.pid_cliente) {
+                        char temp[100];
+                        sprintf(temp, "[ATIVO] Servico #%d (Taxi PID %d) - Dist: %dkm\n", 
+                                frota[i].id_servico, frota[i].pid, frota[i].distancia);
+                        strcat(buffer_resposta, temp);
+                        encontrou++;
+                }
+            }
+            //2.ver na fila de espera
+            for(int i=0; i<num_na_fila;i++){
+                if(fila_espera[i].pid_cliente == msg.pid_cliente){
+                    char temp[100];
+                    sprintf(temp, "[ESPERA] Posicao %d: Destino %s (%dkm)\n", 
+                                i+1, fila_espera[i].dados.destino, fila_espera[i].dados.distancia);
+                        strcat(buffer_resposta, temp);
+                        encontrou++;
+                }
+            }
+            pthread_mutex_unlock(&trinco);
+
+            if(encontrou==0){
+                enviar_resposta(msg.pid_cliente, RES_INFO, "Nao tens viagens ativas nem agendadas.");
+            } else {
+                enviar_resposta(msg.pid_cliente, RES_INFO, buffer_resposta);
+            }
+        } // Fecha o else if (MSG_CONSULTAR_VIAGENS)
+    } // Fecha o if (n == sizeof(msg))
+ } // <--- ESTA É A QUE DEVE ESTAR A FALTAR (Fecha o while(running))
+
     close(fd_fifo);
     return NULL;
 }
-
 // --- THREAD ADMIN ---
 void *tarefa_admin(void *arg) {
     (void)arg;
@@ -311,6 +347,7 @@ int main() {
                             // Nota: Fazemos o fork manualmente para não ter problemas com mutex (já estamos com ele trancado)
                             
                             static int id_servico_fila = 5000;
+                            int id_atual = id_servico_fila++; // [CORREÇÃO] O Pai incrementa e guarda o valor
                             char fifo[50];
                             sprintf(fifo, "%s%d", FIFO_CLIENTE_PREFIX, proximo.pid_cliente);
                             
@@ -323,7 +360,7 @@ int main() {
                             if(pid == 0) { // Filho
                                 close(pipe_fd[0]); dup2(pipe_fd[1], STDOUT_FILENO); close(pipe_fd[1]);
                                 char s_id[10], s_dist[10];
-                                sprintf(s_id, "%d", id_servico_fila++);
+                                sprintf(s_id, "%d", id_atual); // [CORREÇÃO] Usa o valor fixo que definimos antes
                                 sprintf(s_dist, "%d", proximo.dados.distancia);
                                 char *args[] = { "./veiculo", s_id, s_dist, fifo, NULL };
                                 execvp("./veiculo", args);
@@ -335,10 +372,15 @@ int main() {
                                 frota[i].pid = pid;
                                 frota[i].pipe_fd = pipe_fd[0];
                                 frota[i].distancia = proximo.dados.distancia;
-                                frota[i].id_servico = id_servico_fila - 1;
+                                frota[i].id_servico = id_atual;
+                                frota[i].pid_cliente = proximo.pid_cliente; // [NOVO] Atribui dono
+                                pthread_mutex_unlock(&trinco);
                                 
                                 printf("[FILA] Atendendo pedido da fila: %s (PID %d)\n", proximo.username, pid);
                                 enviar_resposta(proximo.pid_cliente, RES_INFO, "Chegou a tua vez! Taxi a caminho.");
+                                // Nota: Fiz unlock antes de tempo no código original, aqui ajustei para ficar safe
+                                // Mas como o bloco do for tem o mutex, não preciso dar lock de novo
+                                pthread_mutex_lock(&trinco); // Re-lock para continuar o loop
                             }
                         }
                     }
