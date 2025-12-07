@@ -100,12 +100,12 @@ int main(int argc, char *argv[]) {
             }
 
             // Parsing do comando
-            char cmd[20], arg1[20], arg2[20], arg3[20];
+            char cmd[20], arg1[20], arg2[20], arg3[20], arg4[20];
             // Limpar buffers
             memset(cmd, 0, 20); memset(arg1, 0, 20); 
             memset(arg2, 0, 20); memset(arg3, 0, 20);
 
-            int n_args = sscanf(linha, "%s %s %s %s", cmd, arg1, arg2, arg3);
+            int n_args = sscanf(linha, "%s %s %s %s %s", cmd, arg1, arg2, arg3, arg4);
 
             if (n_args > 0) {
                 // > SAIR
@@ -116,8 +116,8 @@ int main(int argc, char *argv[]) {
                 
                 // > AGENDAR
                 else if (strcmp(cmd, "agendar") == 0) {
-                     if (n_args < 4) {
-                        printf("Uso: agendar <origem> <destino> <distancia>\n");
+                     if (n_args < 5) {
+                        printf("Uso: agendar <origem> <destino> <distancia> <tempo_segundos_espera>\n");
                      } else {
                         MsgCliente p;
                         p.pid_cliente = getpid();
@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
                         strncpy(p.dados.partida, arg1, 49);
                         strncpy(p.dados.destino, arg2, 49);
                         p.dados.distancia = atoi(arg3);
-
+                        p.dados.hora = atoi(arg4); // [NOVO] Lê os segundos
                         int fd = open(FIFO_CONTROLADOR, O_WRONLY);
                         if(fd != -1) {
                             write(fd, &p, sizeof(p));

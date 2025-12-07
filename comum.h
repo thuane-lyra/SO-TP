@@ -56,6 +56,7 @@ typedef struct{
         char partida[50]; //local 
         char destino[50]; //isto e so informativo
         int distancia; //Estimativa ou valor real ns
+        int hora;
     }dados;
 } MsgCliente;
 
