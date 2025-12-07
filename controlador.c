@@ -46,7 +46,24 @@ pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
 // --- FUNÇÕES AUXILIARES ---
 
-// [NOVO] Auxiliar para contar carros ativos de forma thread-safe (se chamada dentro de lock)
+// [NOVO] Auxiliar para verificar se cliente já tem pedido ativo
+// (Deve ser chamada dentro de uma zona com MUTEX trancado)
+int cliente_ja_tem_pedido(pid_t pid_cli) {
+    // 1. Verificar se está num veiculo
+    for(int i=0; i<MAX_VEICULOS; i++) {
+        if (frota[i].ocupado && frota[i].pid_cliente == pid_cli) return 1;
+    }
+    // 2. Verificar se está na fila de espera
+    for(int i=0; i<num_na_fila; i++) {
+        if (fila_espera[i].pid_cliente == pid_cli) return 1;
+    }
+    // 3. Verificar se tem agendamento pendente (timer)
+    for(int i=0; i<num_agendados; i++) {
+        if (lista_agendados[i].pedido.pid_cliente == pid_cli) return 1;
+    }
+    return 0;
+}
+
 int conta_veiculos_ocupados() {
     int count = 0;
     for(int i=0; i < MAX_VEICULOS; i++) {
@@ -211,17 +228,26 @@ void *tarefa_clientes(void *arg) {
                 }
             }
             else if (msg.tipo == MSG_PEDIDO_VIAGEM) {
+                
+                // [NOVO] Proteção anti-spam de viagens
+                pthread_mutex_lock(&trinco);
+                if (cliente_ja_tem_pedido(msg.pid_cliente)) {
+                    pthread_mutex_unlock(&trinco);
+                    enviar_resposta(msg.pid_cliente, RES_ERRO, "Ja tens uma viagem ou pedido ativo!");
+                    continue; // Ignora o resto e volta ao início
+                }
+
+                // Se não tem pedidos, prossegue...
                 // Lógica de Hora: Agendar ou Imediato?
                 if (msg.dados.hora > 0) {
-                    pthread_mutex_lock(&trinco);
                     registar_agendamento(msg);
                     pthread_mutex_unlock(&trinco);
                 }
                 else {
                     // Pedido Imediato
-                    pthread_mutex_lock(&trinco);
                     int vagas = 0;
                     for(int i=0; i<n_max_veiculos; i++) if(!frota[i].ocupado) vagas++;
+                    // Mutex ainda está trancado
                     pthread_mutex_unlock(&trinco);
 
                     if (vagas > 0) {
@@ -314,7 +340,7 @@ void *tarefa_admin(void *arg) {
                         printf("Slot %d: Servico #%d (PID %d)\n", i, frota[i].id_servico, frota[i].pid);
                 pthread_mutex_unlock(&trinco);
             }
-            else if (strcmp(cmd, "listar") == 0) { //  - O QUE FALTAVA
+            else if (strcmp(cmd, "listar") == 0) {
                 pthread_mutex_lock(&trinco);
                 
                 printf("\n--- AGENDAMENTOS (Timers) ---\n");
@@ -378,7 +404,7 @@ int main() {
 
     EstadoVeiculo st;
     
-    // --- LOOP PRINCIPAL CORRIGIDO ---
+    // --- LOOP PRINCIPAL ---
     while(running) {
         
         // ============================================================
@@ -403,7 +429,7 @@ int main() {
         }
         pthread_mutex_unlock(&trinco);
 
-        // Processar fora do lock principal para poder chamar cria_veiculo
+        // Processar fora do lock principal
         for(int k=0; k < qtd_para_lancar; k++) {
             MsgCliente p = pedidos_para_lancar[k];
             printf("[AGENDA] O pedido de %s (Timer) disparou!\n", p.username);
