@@ -136,7 +136,7 @@ int main(int argc, char *argv[]) {
                      }
                 }
                 
-                // > CANCELAR (TAREFA 7)
+            
                 else if (strcmp(cmd, "cancelar") == 0) {
                      if (n_args < 2) {
                         printf("Uso: cancelar <id_servico>\n");

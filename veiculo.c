@@ -59,10 +59,6 @@ int main(int argc, char *argv[]) {
     estado.servico_id = g_id_servico;
     estado.estado = OCUPADO;
 
-    // --- CÁLCULO DO TEMPO ---
-    // Regra: Velocidade = 1km / 1seg
-    // O loop corre 10 vezes (0, 10, 20... 100)
-    // Tempo a dormir em cada volta = Distancia Total / 10
     
     int segundos_por_fatia = dist_km / 10;
 

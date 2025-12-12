@@ -2,7 +2,7 @@
 #include <pthread.h> 
 #include <time.h>    
 
-// --- STRUCT ATUALIZADA ---
+
 typedef struct {
     pid_t pid;       
     int pipe_fd;     
@@ -46,8 +46,6 @@ pthread_mutex_t trinco = PTHREAD_MUTEX_INITIALIZER;
 
 // --- FUNÇÕES AUXILIARES ---
 
-// [NOVO] Auxiliar para verificar se cliente já tem pedido ativo
-// (Deve ser chamada dentro de uma zona com MUTEX trancado)
 int cliente_ja_tem_pedido(pid_t pid_cli) {
     // 1. Verificar se está num veiculo
     for(int i=0; i<MAX_VEICULOS; i++) {
@@ -229,7 +227,7 @@ void *tarefa_clientes(void *arg) {
             }
             else if (msg.tipo == MSG_PEDIDO_VIAGEM) {
                 
-                // [NOVO] Proteção anti-spam de viagens
+                // Proteção anti-spam de viagens
                 pthread_mutex_lock(&trinco);
                 if (cliente_ja_tem_pedido(msg.pid_cliente)) {
                     pthread_mutex_unlock(&trinco);
@@ -406,10 +404,7 @@ int main() {
     
     // --- LOOP PRINCIPAL ---
     while(running) {
-        
-        // ============================================================
         // 1. GESTÃO DE AGENDAMENTOS (TIMERS)
-        // ============================================================
         time_t agora = time(NULL);
         MsgCliente pedidos_para_lancar[MAX_AGENDADOS];
         int qtd_para_lancar = 0;
@@ -452,10 +447,9 @@ int main() {
                 pthread_mutex_unlock(&trinco);
             }
         }
-
-        // ============================================================
+        
         // 2. GESTÃO DE VEÍCULOS (TELEMETRIA)
-        // ============================================================
+
         pthread_mutex_lock(&trinco);
         for(int i=0; i<MAX_VEICULOS; i++) {
             if(frota[i].ocupado && frota[i].pipe_fd != -1) {
@@ -486,9 +480,9 @@ int main() {
         }
         pthread_mutex_unlock(&trinco);
 
-        // ============================================================
+        
         // 3. PROCESSADOR DE FILA DE ESPERA (INDEPENDENTE)
-        // ============================================================
+        
         // Verifica continuamente se há vagas e pessoas na fila
         while(1) {
             MsgCliente proximo;
